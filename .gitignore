@@ -1,0 +1,23 @@
+# Ignore emacs swap and temp files.
+\#*\#
+.#*
+
+# Ignore vim swap and temp files.
+*~
+*.sw[nop]
+
+# Ignore SBCL compiled code.
+*.fasl
+
+# Per-machine configuration, loaded by RELOAD-LOCAL-CONFIGURATION.
+# Keep the API key here.  Do not commit it.
+source/configuration/local-configuration.lisp
+source/configuration/local-configurations/*
+
+# Ignore some LaTeX stuff.
+documentation/*.aux
+documentation/*.log
+documentation/*.toc
+documentation/*.bbl
+documentation/*.blg
+documentation/*.out
