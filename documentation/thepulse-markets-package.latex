@@ -1,0 +1,156 @@
+%%%% Copyright (C) 2026, Christopher Mark Gore,
+%%%% Soli Deo Gloria,
+%%%% All rights reserved.
+%%%%
+%%%% 22 Forest Glade Court, Saint Charles, Missouri 63304 USA.
+%%%% Web: http://cgore.com
+%%%% Email: cgore@cgore.com
+%%%%
+%%%% Redistribution and use in source and binary forms, with or without
+%%%% modification, are permitted provided that the following conditions are met:
+%%%%
+%%%%     * Redistributions of source code must retain the above copyright
+%%%%       notice, this list of conditions and the following disclaimer.
+%%%%
+%%%%     * Redistributions in binary form must reproduce the above copyright
+%%%%       notice, this list of conditions and the following disclaimer in the
+%%%%       documentation and/or other materials provided with the distribution.
+%%%%
+%%%%     * Neither the name of Christopher Mark Gore nor the names of other
+%%%%       contributors may be used to endorse or promote products derived from
+%%%%       this software without specific prior written permission.
+%%%%
+%%%% THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+%%%% AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+%%%% IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+%%%% ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+%%%% LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+%%%% CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+%%%% SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+%%%% INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+%%%% CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+%%%% ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+%%%% POSSIBILITY OF SUCH DAMAGE.
+
+\chapter{Using the Library}
+
+The \texttt{thepulse-markets} package is what application code uses.
+It re-exports the REST client and adds prices, local signature checks,
+and OHLC history.
+
+\section{Prices}
+
+\lispFunctionSubsection{price}
+
+Current index price.  The primary value is a number.  The second value
+is the signed print.
+
+With a usable key this is \texttt{get-price}.  Without one, \texttt{:btc},
+\texttt{:eth}, and \texttt{:sol} come from the sample and anything else
+signals \texttt{needs-key}.  \texttt{btc}, \texttt{eth}, and \texttt{sol}
+are those three calls.
+
+\texttt{:cache} defaults to nil.  A 60-second cache would hand back a
+stale signed print.
+
+\lispFunctionSubsection{prices}
+
+One plist per symbol: \texttt{:symbol}, \texttt{:price}, \texttt{:print},
+\texttt{:code}, \texttt{:message}.  One \texttt{/batch} call when a key
+is set.  An unknown ticker is a row, not a failed batch.
+
+\lispFunctionSubsection{settlement-print}
+
+The signed print nearest a time.  Values are the price, the print, and
+\texttt{deltaMs}.  \texttt{deltaMs} is the distance from the time you
+asked for.  It is not signed.  The print is the nearest recorded sample,
+not a price synthesized at that instant.
+
+\lispFunctionSubsection{verity-price}
+
+The unsigned breadth read.  \texttt{verify-print} does not apply.
+
+\section{Verification}
+
+The v1 canonical string is five lines:
+
+\begin{quote}
+\texttt{pulse-index-v1}\\
+symbol\\
+price text\\
+timestamp\\
+grade
+\end{quote}
+
+The price text is the \texttt{priceText} field when Pulse sent one.
+Reprinting the float is a fallback and can fail a check that the
+original text would pass.  If \texttt{price} and \texttt{priceText} are
+different numbers, \texttt{verify-print} returns nil with reason
+\texttt{:price-text-mismatch} and does not treat the print as merely
+badly signed.
+
+The signature is ECDSA P-256 with SHA-256, IEEE-P1363 \texttt{r||s},
+standard base64.  The public key is the uncompressed P-256 point from
+the published JWK, or the tail of the PEM.  The ring is at most 16 keys.
+A \texttt{kid} selects that key.  A print with no \texttt{kid} is tried
+against the ring.
+
+\lispFunctionSubsection{verify-print}
+
+Primary value is true or false.  The second value is a plist:
+\texttt{:valid}, \texttt{:v1}, \texttt{:v2}, \texttt{:kid},
+\texttt{:checked}, \texttt{:reason}.
+
+\texttt{:version :v1} is the default.  \texttt{:v2} checks the canonical
+string Pulse stored under \texttt{v2}, which includes tier, confidence,
+cadence, and the interval.  Do not rebuild that string.
+\texttt{:both} requires v1, and requires v2 when the block is present.
+A print that has only v1 still passes \texttt{:both}.
+
+With no \texttt{:key-ring} argument the ring is fetched, and fetched
+once more if the signature fails.  A ring you pass is not refreshed.
+True does not authenticate fields outside the canonical string you
+checked.
+
+\section{History}
+
+\lispFunctionSubsection{ohlc-history}
+
+A list of \texttt{ohlc-bar} and a meta plist.  The default window is the
+last 24 hours.  \texttt{get-history} with no bounds walks from the start
+of the archive; this function does not.  The default interval is one
+minute.
+
+Verified history rebuilds bars from the signed observations, so each
+interval in the window is one bar even when the read spans pages.
+The reconstructed dataset has candles only.  Fragments that share a
+timestamp are merged: open from the first, close from the last, high the
+max, low the min.  Reconstructed history is not a contemporaneous
+signature.  The meta plist says which, in
+\texttt{:contemporaneously-signed}.
+
+\texttt{:limit} requests one page.  \texttt{:follow t} walks cursors,
+stopping after \texttt{*history-max-pages*} (20).  \texttt{:truncated}
+is true when the walk stopped early.
+
+Volume and adjusted close are nil.  Pulse does not report trade volume.
+
+\lispFunctionSubsection{price-history}
+
+\texttt{(universal-time price)} pairs and the same meta plist.
+Verified history returns every observation.  Reconstructed history
+returns the candle close.  Universal time drops the fractional second.
+
+\lispFunctionSubsection{ohlc-bars-for-ingest}
+
+The tuple list \texttt{candlesticks:ingest-candlesticks} accepts:
+\texttt{(time open high low close volume adjusted-close)}.  This library
+does not depend on candlesticks.  The quote currency in the meta plist
+is USD.
+
+\lispTypeSubsection{ohlc-bar}
+
+Slots \texttt{time}, \texttt{open}, \texttt{high}, \texttt{low},
+\texttt{close}, \texttt{volume}, and \texttt{adjusted-close}, with
+accessors \texttt{ohlc-bar-time} and so on.  \texttt{time} is a
+universal time.

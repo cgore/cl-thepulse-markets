@@ -1,0 +1,153 @@
+%%%% Copyright (C) 2026, Christopher Mark Gore,
+%%%% Soli Deo Gloria,
+%%%% All rights reserved.
+%%%%
+%%%% 22 Forest Glade Court, Saint Charles, Missouri 63304 USA.
+%%%% Web: http://cgore.com
+%%%% Email: cgore@cgore.com
+%%%%
+%%%% Redistribution and use in source and binary forms, with or without
+%%%% modification, are permitted provided that the following conditions are met:
+%%%%
+%%%%     * Redistributions of source code must retain the above copyright
+%%%%       notice, this list of conditions and the following disclaimer.
+%%%%
+%%%%     * Redistributions in binary form must reproduce the above copyright
+%%%%       notice, this list of conditions and the following disclaimer in the
+%%%%       documentation and/or other materials provided with the distribution.
+%%%%
+%%%%     * Neither the name of Christopher Mark Gore nor the names of other
+%%%%       contributors may be used to endorse or promote products derived from
+%%%%       this software without specific prior written permission.
+%%%%
+%%%% THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+%%%% AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+%%%% IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+%%%% ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+%%%% LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+%%%% CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+%%%% SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+%%%% INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+%%%% CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+%%%% ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+%%%% POSSIBILITY OF SUCH DAMAGE.
+
+\chapter{The REST Client}
+
+The HTTP layer.  It sends \texttt{Authorization: Bearer} only on keyed
+paths, refuses redirects, retries HTTP 429 \texttt{RATE\_LIMITED}, and
+does not retry \texttt{MONTHLY\_LIMIT}.  JSON arrays become vectors and
+booleans become symbols.  A body with \texttt{success: false} is an
+\texttt{api-error} even when the status was 200.
+
+\section{Variables}
+
+\lispVariableSubsection{*api*}
+
+\texttt{https://mcp.thepulse.markets}.  Paths hang off
+\texttt{/api/index/v1/}.
+
+\lispVariableSubsection{*api-key*}
+
+The developer key.  On load, the gitignored
+\texttt{local-configuration.lisp} file is loaded when it exists
+and may rebind this.  Otherwise the library reads
+\texttt{PULSE\_API\_KEY}, then
+\texttt{THEPULSE\_MARKETS\_API\_KEY}.
+The file wins over the environment.  \texttt{use-key} and
+\texttt{use-keyless} set it in the image.  Placeholders such as
+\texttt{pidx\_your\_key\_here} are treated as no key.
+
+\lispVariableSubsection{*api-cache-timeout-seconds*}
+
+How long \texttt{http-get-json-cached} keeps a response.  Default 60.
+Live price calls default to \texttt{:cache nil}.  The cache is
+partitioned by a short hash of the key, not by the key itself.
+
+\lispVariableSubsection{*pubkey-cache-timeout-seconds*}
+
+How long \texttt{get-pubkey} keeps the verification ring.  Default 300.
+
+\lispVariableSubsection{*max-retries*}
+
+Attempts for a rate-limited response.  Default 3.  Attempt $n$ waits
+$n$ times \texttt{*retry-wait-seconds*} (default 2), or \texttt{Retry-After}
+when that header is between 1 and 30 seconds.
+
+\section{Conditions}
+
+All of these are subclasses of \texttt{api-error}.  Readers are
+\texttt{api-error-status}, \texttt{api-error-url},
+\texttt{api-error-code}, \texttt{api-error-message}, and
+\texttt{api-error-body}.
+
+\begin{center}
+\begin{tabular}{ll}
+\texttt{rate-limited} & HTTP 429, wait and retry \\
+\texttt{monthly-limit} & HTTP 429, do not retry \\
+\texttt{unauthorized} & HTTP 401 \\
+\texttt{plan-restricted} & HTTP 403 \\
+\texttt{unsupported-symbol} & the ticker is not served \\
+\texttt{service-unavailable} & HTTP 503 \\
+\texttt{needs-key} & a keyed call with no usable key \\
+\end{tabular}
+\end{center}
+
+An unsupported symbol on \texttt{/price} signals.  The same symbol inside
+\texttt{get-batch} is one row with \texttt{success} false.  It is not a
+price of zero.
+
+\section{Symbols and time}
+
+\lispFunctionSubsection{canonicalize-symbol}
+
+Uppercase a ticker.  \texttt{:btc} and \texttt{"btc"} are both
+\texttt{"BTC"}.
+
+\lispFunctionSubsection{canonicalize-symbols}
+
+A symbol, a comma string, or a list.  Duplicates drop, order stays.
+
+\lispFunctionSubsection{canonicalize-interval}
+
+\texttt{1m}, \texttt{5m}, \texttt{1h}, \texttt{1d}.  Short names
+\texttt{m}, \texttt{h}, and \texttt{d} map onto those.  The Lisp reader
+upcases, so \texttt{:m} and \texttt{:M} are the same symbol and mean a
+minute.
+
+\lispFunctionSubsection{canonicalize-time}
+
+An ISO-8601 string passes through.  An integer above $10^{11}$ is UNIX
+milliseconds, above $3\cdot10^{9}$ is a universal time, and anything
+smaller is UNIX seconds.  The result is \texttt{YYYY-MM-DDTHH:MM:SSZ}.
+
+\lispFunctionSubsection{parse-iso-8601}
+
+The inverse, to universal time.  Fractional seconds are truncated.
+\texttt{Z} and numeric offsets are accepted.
+
+\section{Reads}
+
+Each \texttt{get-*} function is the REST path of the same name.
+\texttt{get-price} is \texttt{/price} and always requires a key.
+\texttt{get-sample} is the keyless BTC, ETH, and SOL print.
+\texttt{get-batch} accepts up to 100 symbols.
+\texttt{get-print} is the signed print nearest a time, plus
+\texttt{deltaMs}.
+\texttt{get-history} takes \texttt{:dataset} \texttt{verified} or
+\texttt{reconstructed}, an interval, and an optional page
+\texttt{:cursor}.
+\texttt{get-research-compare} and \texttt{get-source-health} are the
+plan-gated research reads.
+\texttt{get-verity-price}, \texttt{get-verity-batch}, and
+\texttt{get-verity-catalog} are the unsigned breadth surface.
+Public, and not sent the key:
+\texttt{get-pubkey},
+\texttt{get-symbols},
+\texttt{get-health},
+\texttt{get-status},
+\texttt{get-verity-status},
+and \texttt{get-verity-venues}.
+
+Results are Yason hash tables.  Pass \texttt{:cache nil} to skip the
+cache.  \texttt{get-pubkey} uses its own five-minute cache.
